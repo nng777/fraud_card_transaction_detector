@@ -99,7 +99,10 @@ class FraudDetector:
         return df
 
     def _prepare_features(self, df: pd.DataFrame, fit: bool = False) -> pd.DataFrame:
-        X = df.values
+        df_enc = df.copy()
+        for col in df_enc.select_dtypes(include="object").columns:
+            df_enc[col] = pd.factorize(df_enc[col])[0]
+        X = df_enc.values
         if fit:
             X = self.scaler.fit_transform(X)
             joblib.dump(self.scaler, "scaler.joblib")
