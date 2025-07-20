@@ -244,7 +244,13 @@ class FraudDetector:
                 if not Path(f"{name}.joblib").exists():
                     raise RuntimeError("Model not trained: %s" % name)
                 model = joblib.load(f"{name}.joblib")
-                self.models[name] = model
+            # validate feature dimensionality to avoid mismatched models
+            if hasattr(model, "n_features_in_") and model.n_features_in_ != X.shape[1]:
+                raise RuntimeError(
+                    f"Loaded model '{name}' expects {model.n_features_in_} features "
+                    f"but dataset has {X.shape[1]}. Retrain models."
+                )
+            self.models[name] = model
         for name, model in tqdm(self.models.items(), desc="Testing models"):
             preds = model.predict(X)
             predictions[name] = preds
@@ -257,7 +263,13 @@ class FraudDetector:
             if not Path("velocity_model.joblib").exists():
                 raise RuntimeError("Model not trained: velocity_model")
             v_model = joblib.load("velocity_model.joblib")
-            self.models["velocity_model"] = v_model
+        if hasattr(v_model, "n_features_in_") and v_model.n_features_in_ != vX.shape[1]:
+            raise RuntimeError(
+                "Loaded velocity_model expects "
+                f"{v_model.n_features_in_} features but dataset has "
+                f"{vX.shape[1]}. Retrain models."
+            )
+        self.models["velocity_model"] = v_model
         v_preds = v_model.predict(vX)
         predictions["velocity_model"] = v_preds
         results["velocity_model"] = int((v_preds == -1).sum())
