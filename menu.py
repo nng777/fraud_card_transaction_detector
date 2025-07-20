@@ -17,7 +17,9 @@ class Menu:
                 "2. Test models\n"
                 "3. Visualize comparison\n"
                 "4. Save anomalies\n"
-                "5. Exit"
+                "5. Scatter plot (amount vs time)\n"
+                "6. Heatmap correlation\n"
+                "7. Exit"
             )
             choice = input("Select option: ").strip()
             if choice == "1":
@@ -41,13 +43,22 @@ class Menu:
                 if self.results is None:
                     print("Run test first")
                     continue
-                files = self.detector.save_anomalies(per_model=True)
-                if isinstance(files, list):
-                    for f in files:
-                        print(f"Saved anomalies to {f}")
-                else:
-                    print(f"Potential fraud saved to {files}")
+                files = self.detector.save_anomalies()
+                for f in files:
+                    print(f"Saved anomalies to {f}")
             elif choice == "5":
+                if self.results is None:
+                    print("Run test first")
+                    continue
+                img = self.detector.visualize_scatter()
+                print(f"Scatter plot saved to {img}")
+            elif choice == "6":
+                if self.results is None:
+                    print("Run test first")
+                    continue
+                img = self.detector.visualize_heatmap()
+                print(f"Heatmap saved to {img}")
+            elif choice == "7":
                 break
             else:
                 print("Invalid option")

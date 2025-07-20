@@ -6,6 +6,7 @@ from typing import Dict, Iterable
 
 import joblib
 import matplotlib.pyplot as plt
+import seaborn as sns
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor
@@ -171,21 +172,11 @@ class FraudDetector:
         self._test_df = df
         return results
 
-    def save_anomalies(
-        self,
-        out_file: str | Path = "potential_fraud.csv",
-        *,
-        per_model: bool = False,
-    ) -> Path | list[Path]:
-        """Save detected anomalies to CSV.
+    def save_anomalies(self) -> list[Path]:
+        """Save detected anomalies from the most recent test to CSV files.
 
-        Parameters
-        ----------
-        out_file:
-            File path for the aggregated output when ``per_model`` is ``False``.
-        per_model:
-            When ``True`` save a separate CSV file for each model and heuristic
-            check. The file name will be ``<model>_anomalies.csv``.
+        One file is created for each model and each heuristic check. Filenames
+        follow the pattern ``<model>_anomalies.csv``.
         """
 
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
@@ -200,23 +191,12 @@ class FraudDetector:
             lambda x: str(ipaddress.ip_address(int(x)))
         )
 
-        df["potential_fraud"] = df[
-            [col for col in df.columns if col.endswith("_flag")]
-            + ["bad_ip", "blacklisted_country"]
-        ].any(axis=1)
-
-        if not per_model:
-            df[df["potential_fraud"]].to_csv(out_file, index=False)
-            return Path(out_file)
-
         saved: list[Path] = []
-        # Save anomalies detected by each model individually
         for name in self._last_predictions.keys():
             path = Path(f"{name}_anomalies.csv")
             df[df[f"{name}_flag"] == 1].to_csv(path, index=False)
             saved.append(path)
 
-        # Heuristic results
         if "bad_ip" in df.columns:
             path = Path("bad_ip_anomalies.csv")
             df[df["bad_ip"] == 1].to_csv(path, index=False)
@@ -230,6 +210,7 @@ class FraudDetector:
         return saved
 
     def visualize(self, results: Dict[str, int] | None = None) -> Path:
+        """Create a bar chart comparing anomaly counts across models."""
         if results is None:
             if not hasattr(self, "_last_results"):
                 raise RuntimeError("No results to visualize. Run test first.")
@@ -242,6 +223,43 @@ class FraudDetector:
         plt.title("Model comparison")
         plt.tight_layout()
         out = Path("model_comparison.png")
+        plt.savefig(out)
+        plt.close()
+        return out
+
+    def visualize_scatter(self, model: str = "isolation_forest") -> Path:
+        """Plot amount vs. time colored by anomaly flag for a given model."""
+        if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
+            raise RuntimeError("Run test first.")
+
+        if model not in self._last_predictions:
+            raise ValueError(f"Unknown model: {model}")
+
+        df = self._test_df.copy()
+        df["anomaly"] = (self._last_predictions[model] == -1)
+        times = pd.to_datetime(df["transaction_time"])
+        plt.figure(figsize=(8, 6))
+        plt.scatter(times, df["amount"], c=df["anomaly"], cmap="coolwarm", s=10, alpha=0.7)
+        plt.xlabel("Transaction time")
+        plt.ylabel("Amount")
+        plt.title(f"Anomaly scatter plot - {model}")
+        plt.tight_layout()
+        out = Path(f"{model}_scatter.png")
+        plt.savefig(out)
+        plt.close()
+        return out
+
+    def visualize_heatmap(self) -> Path:
+        """Show a heatmap of feature correlations."""
+        if not hasattr(self, "_test_df"):
+            raise RuntimeError("Run test first.")
+
+        corr = self._test_df.corr(numeric_only=True)
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(corr, cmap="coolwarm", annot=False)
+        plt.title("Feature correlation heatmap")
+        plt.tight_layout()
+        out = Path("feature_heatmap.png")
         plt.savefig(out)
         plt.close()
         return out
