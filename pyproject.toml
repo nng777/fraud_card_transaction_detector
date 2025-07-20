@@ -11,7 +11,8 @@ dependencies = [
         "pandas",
         "scikit-learn",
         "matplotlib",
-        "joblib"
+        "joblib",
+        "tqdm (>=4.67.1,<5.0.0)"
 ]
 
 
