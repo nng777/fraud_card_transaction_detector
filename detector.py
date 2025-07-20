@@ -19,15 +19,6 @@ from tqdm import tqdm
 class FraudDetector:
     """Train and evaluate unsupervised models for fraud detection."""
 
-    VELOCITY_FEATURES = [
-        "transactions_per_hour",
-        "avg_time_between_transactions",
-        "spend_in_last_5_minutes",
-        "number_of_failed_attempts_in_1_hour",
-        "geolocation_change_speed",
-        "distance_between_consecutive_transactions",
-    ]
-
     def __init__(self, train_file: str | Path, test_file: str | Path):
         self.train_file = Path(train_file)
         self.test_file = Path(test_file)
@@ -70,51 +61,6 @@ class FraudDetector:
         c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return 6371.0 * c
 
-    def _add_velocity_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Compute velocity-based behavioral features for each transaction."""
-        df = df.sort_values(["card_number", "transaction_time"]).reset_index(drop=True)
-
-        feats = {name: [] for name in self.VELOCITY_FEATURES}
-        history: dict[str, list[dict[str, float]]] = {}
-
-        for _, row in df.iterrows():
-            card = row["card_number"]
-            ts = row["transaction_time"]
-            amount = row["amount"]
-            lat = row["location_latitude"]
-            lon = row["location_longitude"]
-
-            hist = history.setdefault(card, [])
-
-            # transactions in the last hour
-            recent = [h for h in hist if (ts - h["time"]).total_seconds() <= 3600]
-            feats["transactions_per_hour"].append(len(recent))
-
-            # spend in last 5 minutes
-            spend = sum(h["amount"] for h in recent if (ts - h["time"]).total_seconds() <= 300)
-            feats["spend_in_last_5_minutes"].append(spend)
-
-            # previous transaction info
-            if hist:
-                prev = hist[-1]
-                diff = (ts - prev["time"]).total_seconds()
-                feats["avg_time_between_transactions"].append(diff)
-                dist = self._haversine(prev["lon"], prev["lat"], lon, lat)
-                feats["distance_between_consecutive_transactions"].append(dist)
-                speed = dist / (diff / 3600) if diff > 0 else 0
-                feats["geolocation_change_speed"].append(speed)
-            else:
-                feats["avg_time_between_transactions"].append(0.0)
-                feats["distance_between_consecutive_transactions"].append(0.0)
-                feats["geolocation_change_speed"].append(0.0)
-
-            feats["number_of_failed_attempts_in_1_hour"].append(0)
-
-            hist.append({"time": ts, "amount": amount, "lat": lat, "lon": lon})
-
-        for name, values in feats.items():
-            df[name] = values
-        return df
 
     def is_bad_ip(self, ip: int | str) -> bool:
         """Return True if IP address is in the bad reputation list."""
@@ -137,8 +83,6 @@ class FraudDetector:
         df["transaction_time"] = pd.to_datetime(df["transaction_time"])
         df["cardowner_dateofbirth"] = pd.to_datetime(df["cardowner_dateofbirth"])
 
-        # velocity features require card_number and original timestamps
-        df = self._add_velocity_features(df)
 
         df = df.drop(
             columns=[
@@ -191,19 +135,6 @@ class FraudDetector:
             X = self.scaler.transform(X)
         return X
 
-    def _prepare_velocity_matrix(self, df: pd.DataFrame, fit: bool = False) -> pd.DataFrame:
-        X = df.values
-        if not hasattr(self, "velocity_scaler"):
-            self.velocity_scaler = StandardScaler()
-        if fit:
-            X = self.velocity_scaler.fit_transform(X)
-            joblib.dump(self.velocity_scaler, "velocity_scaler.joblib")
-        else:
-            if not Path("velocity_scaler.joblib").exists():
-                raise RuntimeError("Velocity scaler not found. Train models first.")
-            self.velocity_scaler = joblib.load("velocity_scaler.joblib")
-            X = self.velocity_scaler.transform(X)
-        return X
 
     def _get_algorithms(self) -> Dict[str, object]:
         return {
@@ -225,12 +156,6 @@ class FraudDetector:
             joblib.dump(model, f"{name}.joblib")
             self.models[name] = model
 
-        # train velocity-based model using dedicated features
-        vX = self._prepare_velocity_matrix(df[self.VELOCITY_FEATURES], fit=True)
-        v_model = IsolationForest(random_state=42)
-        v_model.fit(vX)
-        joblib.dump(v_model, "velocity_model.joblib")
-        self.models["velocity_model"] = v_model
 
     def test(self) -> Dict[str, int]:
         df = self._load_dataset(self.test_file)
@@ -251,28 +176,13 @@ class FraudDetector:
                     f"but dataset has {X.shape[1]}. Retrain models."
                 )
             self.models[name] = model
-        for name, model in tqdm(self.models.items(), desc="Testing models"):
+        for name in tqdm(algorithms.keys(), desc="Testing models"):
+            model = self.models[name]
             preds = model.predict(X)
             predictions[name] = preds
             results[name] = int((preds == -1).sum())
 
-        # velocity model
-        vX = self._prepare_velocity_matrix(df[self.VELOCITY_FEATURES], fit=False)
-        v_model = self.models.get("velocity_model")
-        if v_model is None:
-            if not Path("velocity_model.joblib").exists():
-                raise RuntimeError("Model not trained: velocity_model")
-            v_model = joblib.load("velocity_model.joblib")
-        if hasattr(v_model, "n_features_in_") and v_model.n_features_in_ != vX.shape[1]:
-            raise RuntimeError(
-                "Loaded velocity_model expects "
-                f"{v_model.n_features_in_} features but dataset has "
-                f"{vX.shape[1]}. Retrain models."
-            )
-        self.models["velocity_model"] = v_model
-        v_preds = v_model.predict(vX)
-        predictions["velocity_model"] = v_preds
-        results["velocity_model"] = int((v_preds == -1).sum())
+
 
         # additional heuristic based detections
         df["bad_ip"] = df["ip_address"].apply(self.is_bad_ip).astype(int)
@@ -373,6 +283,34 @@ class FraudDetector:
         plt.title("Feature correlation heatmap")
         plt.tight_layout()
         out = Path("feature_heatmap.png")
+        plt.savefig(out)
+        plt.close()
+        return out
+
+    def visualize_scatter(
+        self,
+        model: str = "isolation_forest",
+        x_col: str = "location_longitude",
+        y_col: str = "location_latitude",
+    ) -> Path:
+        """Scatter plot of two features colored by anomaly flag."""
+        if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
+            raise RuntimeError("Run test first.")
+
+        if model not in self._last_predictions:
+            raise ValueError(f"Unknown model: {model}")
+
+        if x_col not in self._test_df.columns or y_col not in self._test_df.columns:
+            raise ValueError("Selected columns not found in dataset")
+
+        df = self._test_df.copy()
+        df["anomaly"] = (self._last_predictions[model] == -1)
+
+        plt.figure(figsize=(6, 6))
+        sns.scatterplot(x=x_col, y=y_col, hue="anomaly", data=df, palette="Set1")
+        plt.title(f"{model} anomalies")
+        plt.tight_layout()
+        out = Path(f"{model}_scatter.png")
         plt.savefig(out)
         plt.close()
         return out

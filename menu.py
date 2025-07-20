@@ -19,7 +19,8 @@ class Menu:
                 "4. Save anomalies\n"
                 "5. Amount box plot\n"
                 "6. Heatmap correlation\n"
-                "7. Exit"
+                "7. Location scatter\n"
+                "8. Exit"
             )
             choice = input("Select option: ").strip()
             if choice == "1":
@@ -59,6 +60,12 @@ class Menu:
                 img = self.detector.visualize_heatmap()
                 print(f"Heatmap saved to {img}")
             elif choice == "7":
+                if self.results is None:
+                    print("Run test first")
+                    continue
+                img = self.detector.visualize_scatter()
+                print(f"Scatter saved to {img}")
+            elif choice == "8":
                 break
             else:
                 print("Invalid option")
@@ -66,3 +73,4 @@ class Menu:
 
 if __name__ == "__main__":
     Menu().run()
+
