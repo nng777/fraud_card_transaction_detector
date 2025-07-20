@@ -15,11 +15,11 @@ class Menu:
                 "\nMenu:\n"
                 "1. Train models\n"
                 "2. Test models\n"
-                "3. Visualize comparison\n"
+                "3. Comparison Chart Diagram\n"
                 "4. Save anomalies\n"
-                "5. Amount box plot\n"
-                "6. Heatmap correlation\n"
-                "7. Location scatter\n"
+                "5. Amount Box Plot Diagram\n"
+                "6. Heatmap Correlation Diagram\n"
+                "7. Location Scatter Diagram\n"
                 "8. Exit"
             )
             choice = input("Select option: ").strip()
