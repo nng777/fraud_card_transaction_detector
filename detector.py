@@ -54,9 +54,16 @@ class FraudDetector:
         ip_int = int(ipaddress.ip_address(ip))
         return ip_int in self.bad_ip_list
 
-    def is_blacklisted_country(self, country: str) -> bool:
-        """Return True if the country is blacklisted."""
-        return country.upper() in self.blacklisted_countries
+    def is_blacklisted_country(self, country: str | int | float) -> bool:
+        """Return True if the country is blacklisted.
+
+        The dataset may contain encoded values or missing data. Cast the input to
+        string and ignore NaN values to avoid ``AttributeError`` during
+        ``str.upper``.
+        """
+        if pd.isna(country):
+            return False
+        return str(country).upper() in self.blacklisted_countries
 
     @staticmethod
     def _load_dataset(path: Path) -> pd.DataFrame:
@@ -67,7 +74,6 @@ class FraudDetector:
                 "cardowner_lastname",
                 "card_number",
                 "realbank_issuer",
-                "transaction_id",
             ]
         )
         df["transaction_time"] = pd.to_datetime(df["transaction_time"]).astype("int64")
@@ -78,8 +84,6 @@ class FraudDetector:
             {"yes": 1, "no": 0}
         )
         df["ip_address"] = df["ip_address"].apply(lambda x: int(ipaddress.ip_address(x)))
-        for col in df.select_dtypes(include="object").columns:
-            df[col] = pd.factorize(df[col])[0]
 
         # explicitly ensure additional columns are present for anomaly detection
         required = [
@@ -100,6 +104,10 @@ class FraudDetector:
 
     def _prepare_features(self, df: pd.DataFrame, fit: bool = False) -> pd.DataFrame:
         df_enc = df.copy()
+        # ``transaction_id`` is used only for identifying transactions and
+        # should not influence the models, so exclude it from the feature set.
+        if "transaction_id" in df_enc.columns:
+            df_enc = df_enc.drop(columns=["transaction_id"])
         for col in df_enc.select_dtypes(include="object").columns:
             df_enc[col] = pd.factorize(df_enc[col])[0]
         X = df_enc.values
@@ -163,7 +171,23 @@ class FraudDetector:
         self._test_df = df
         return results
 
-    def save_anomalies(self, out_file: str | Path = "potential_fraud.csv") -> Path:
+    def save_anomalies(
+        self,
+        out_file: str | Path = "potential_fraud.csv",
+        *,
+        per_model: bool = False,
+    ) -> Path | list[Path]:
+        """Save detected anomalies to CSV.
+
+        Parameters
+        ----------
+        out_file:
+            File path for the aggregated output when ``per_model`` is ``False``.
+        per_model:
+            When ``True`` save a separate CSV file for each model and heuristic
+            check. The file name will be ``<model>_anomalies.csv``.
+        """
+
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
 
@@ -171,16 +195,39 @@ class FraudDetector:
         for name, preds in self._last_predictions.items():
             df[f"{name}_flag"] = (preds == -1).astype(int)
 
-        # ip address back to readable form
-        df["ip_address"] = df["ip_address"].apply(lambda x: str(ipaddress.ip_address(int(x))))
+        # ip address back to readable form for easier identification
+        df["ip_address"] = df["ip_address"].apply(
+            lambda x: str(ipaddress.ip_address(int(x)))
+        )
 
         df["potential_fraud"] = df[
             [col for col in df.columns if col.endswith("_flag")]
             + ["bad_ip", "blacklisted_country"]
         ].any(axis=1)
 
-        df[df["potential_fraud"]].to_csv(out_file, index=False)
-        return Path(out_file)
+        if not per_model:
+            df[df["potential_fraud"]].to_csv(out_file, index=False)
+            return Path(out_file)
+
+        saved: list[Path] = []
+        # Save anomalies detected by each model individually
+        for name in self._last_predictions.keys():
+            path = Path(f"{name}_anomalies.csv")
+            df[df[f"{name}_flag"] == 1].to_csv(path, index=False)
+            saved.append(path)
+
+        # Heuristic results
+        if "bad_ip" in df.columns:
+            path = Path("bad_ip_anomalies.csv")
+            df[df["bad_ip"] == 1].to_csv(path, index=False)
+            saved.append(path)
+
+        if "blacklisted_country" in df.columns:
+            path = Path("blacklisted_country_anomalies.csv")
+            df[df["blacklisted_country"] == 1].to_csv(path, index=False)
+            saved.append(path)
+
+        return saved
 
     def visualize(self, results: Dict[str, int] | None = None) -> Path:
         if results is None:

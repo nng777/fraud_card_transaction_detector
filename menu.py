@@ -41,8 +41,12 @@ class Menu:
                 if self.results is None:
                     print("Run test first")
                     continue
-                out = self.detector.save_anomalies()
-                print(f"Potential fraud saved to {out}")
+                files = self.detector.save_anomalies(per_model=True)
+                if isinstance(files, list):
+                    for f in files:
+                        print(f"Saved anomalies to {f}")
+                else:
+                    print(f"Potential fraud saved to {files}")
             elif choice == "5":
                 break
             else:
