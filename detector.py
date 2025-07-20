@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 from typing import Dict, Iterable
+from math import radians, sin, cos, sqrt, atan2
 
 import joblib
 import matplotlib.pyplot as plt
@@ -17,6 +18,15 @@ from tqdm import tqdm
 
 class FraudDetector:
     """Train and evaluate unsupervised models for fraud detection."""
+
+    VELOCITY_FEATURES = [
+        "transactions_per_hour",
+        "avg_time_between_transactions",
+        "spend_in_last_5_minutes",
+        "number_of_failed_attempts_in_1_hour",
+        "geolocation_change_speed",
+        "distance_between_consecutive_transactions",
+    ]
 
     def __init__(self, train_file: str | Path, test_file: str | Path):
         self.train_file = Path(train_file)
@@ -50,6 +60,62 @@ class FraudDetector:
         df = pd.read_csv(path)
         return {str(code).strip().upper() for code in df.iloc[:, 0].dropna()}
 
+    @staticmethod
+    def _haversine(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+        """Return the great-circle distance between two coordinates in kilometers."""
+        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return 6371.0 * c
+
+    def _add_velocity_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Compute velocity-based behavioral features for each transaction."""
+        df = df.sort_values(["card_number", "transaction_time"]).reset_index(drop=True)
+
+        feats = {name: [] for name in self.VELOCITY_FEATURES}
+        history: dict[str, list[dict[str, float]]] = {}
+
+        for _, row in df.iterrows():
+            card = row["card_number"]
+            ts = row["transaction_time"]
+            amount = row["amount"]
+            lat = row["location_latitude"]
+            lon = row["location_longitude"]
+
+            hist = history.setdefault(card, [])
+
+            # transactions in the last hour
+            recent = [h for h in hist if (ts - h["time"]).total_seconds() <= 3600]
+            feats["transactions_per_hour"].append(len(recent))
+
+            # spend in last 5 minutes
+            spend = sum(h["amount"] for h in recent if (ts - h["time"]).total_seconds() <= 300)
+            feats["spend_in_last_5_minutes"].append(spend)
+
+            # previous transaction info
+            if hist:
+                prev = hist[-1]
+                diff = (ts - prev["time"]).total_seconds()
+                feats["avg_time_between_transactions"].append(diff)
+                dist = self._haversine(prev["lon"], prev["lat"], lon, lat)
+                feats["distance_between_consecutive_transactions"].append(dist)
+                speed = dist / (diff / 3600) if diff > 0 else 0
+                feats["geolocation_change_speed"].append(speed)
+            else:
+                feats["avg_time_between_transactions"].append(0.0)
+                feats["distance_between_consecutive_transactions"].append(0.0)
+                feats["geolocation_change_speed"].append(0.0)
+
+            feats["number_of_failed_attempts_in_1_hour"].append(0)
+
+            hist.append({"time": ts, "amount": amount, "lat": lat, "lon": lon})
+
+        for name, values in feats.items():
+            df[name] = values
+        return df
+
     def is_bad_ip(self, ip: int | str) -> bool:
         """Return True if IP address is in the bad reputation list."""
         ip_int = int(ipaddress.ip_address(ip))
@@ -66,9 +132,14 @@ class FraudDetector:
             return False
         return str(country).upper() in self.blacklisted_countries
 
-    @staticmethod
-    def _load_dataset(path: Path) -> pd.DataFrame:
+    def _load_dataset(self, path: Path) -> pd.DataFrame:
         df = pd.read_csv(path)
+        df["transaction_time"] = pd.to_datetime(df["transaction_time"])
+        df["cardowner_dateofbirth"] = pd.to_datetime(df["cardowner_dateofbirth"])
+
+        # velocity features require card_number and original timestamps
+        df = self._add_velocity_features(df)
+
         df = df.drop(
             columns=[
                 "cardowner_firstname",
@@ -77,10 +148,8 @@ class FraudDetector:
                 "realbank_issuer",
             ]
         )
-        df["transaction_time"] = pd.to_datetime(df["transaction_time"]).astype("int64")
-        df["cardowner_dateofbirth"] = pd.to_datetime(df["cardowner_dateofbirth"]).astype(
-            "int64"
-        )
+        df["transaction_time"] = df["transaction_time"].astype("int64")
+        df["cardowner_dateofbirth"] = df["cardowner_dateofbirth"].astype("int64")
         df["3D_SecureTransaction(yes/no)"] = df["3D_SecureTransaction(yes/no)"].map(
             {"yes": 1, "no": 0}
         )
@@ -122,6 +191,20 @@ class FraudDetector:
             X = self.scaler.transform(X)
         return X
 
+    def _prepare_velocity_matrix(self, df: pd.DataFrame, fit: bool = False) -> pd.DataFrame:
+        X = df.values
+        if not hasattr(self, "velocity_scaler"):
+            self.velocity_scaler = StandardScaler()
+        if fit:
+            X = self.velocity_scaler.fit_transform(X)
+            joblib.dump(self.velocity_scaler, "velocity_scaler.joblib")
+        else:
+            if not Path("velocity_scaler.joblib").exists():
+                raise RuntimeError("Velocity scaler not found. Train models first.")
+            self.velocity_scaler = joblib.load("velocity_scaler.joblib")
+            X = self.velocity_scaler.transform(X)
+        return X
+
     def _get_algorithms(self) -> Dict[str, object]:
         return {
             "isolation_forest": IsolationForest(random_state=42),
@@ -142,6 +225,13 @@ class FraudDetector:
             joblib.dump(model, f"{name}.joblib")
             self.models[name] = model
 
+        # train velocity-based model using dedicated features
+        vX = self._prepare_velocity_matrix(df[self.VELOCITY_FEATURES], fit=True)
+        v_model = IsolationForest(random_state=42)
+        v_model.fit(vX)
+        joblib.dump(v_model, "velocity_model.joblib")
+        self.models["velocity_model"] = v_model
+
     def test(self) -> Dict[str, int]:
         df = self._load_dataset(self.test_file)
         X = self._prepare_features(df, fit=False)
@@ -159,6 +249,18 @@ class FraudDetector:
             preds = model.predict(X)
             predictions[name] = preds
             results[name] = int((preds == -1).sum())
+
+        # velocity model
+        vX = self._prepare_velocity_matrix(df[self.VELOCITY_FEATURES], fit=False)
+        v_model = self.models.get("velocity_model")
+        if v_model is None:
+            if not Path("velocity_model.joblib").exists():
+                raise RuntimeError("Model not trained: velocity_model")
+            v_model = joblib.load("velocity_model.joblib")
+            self.models["velocity_model"] = v_model
+        v_preds = v_model.predict(vX)
+        predictions["velocity_model"] = v_preds
+        results["velocity_model"] = int((v_preds == -1).sum())
 
         # additional heuristic based detections
         df["bad_ip"] = df["ip_address"].apply(self.is_bad_ip).astype(int)
@@ -227,8 +329,8 @@ class FraudDetector:
         plt.close()
         return out
 
-    def visualize_scatter(self, model: str = "isolation_forest") -> Path:
-        """Plot amount vs. time colored by anomaly flag for a given model."""
+    def visualize_boxplot(self, model: str = "isolation_forest") -> Path:
+        """Show a box plot of transaction amounts grouped by anomaly flag."""
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
 
@@ -237,14 +339,13 @@ class FraudDetector:
 
         df = self._test_df.copy()
         df["anomaly"] = (self._last_predictions[model] == -1)
-        times = pd.to_datetime(df["transaction_time"])
-        plt.figure(figsize=(8, 6))
-        plt.scatter(times, df["amount"], c=df["anomaly"], cmap="coolwarm", s=10, alpha=0.7)
-        plt.xlabel("Transaction time")
+        plt.figure(figsize=(6, 4))
+        sns.boxplot(x="anomaly", y="amount", data=df)
+        plt.xlabel("Anomaly")
         plt.ylabel("Amount")
-        plt.title(f"Anomaly scatter plot - {model}")
+        plt.title(f"Amount distribution - {model}")
         plt.tight_layout()
-        out = Path(f"{model}_scatter.png")
+        out = Path(f"{model}_boxplot.png")
         plt.savefig(out)
         plt.close()
         return out

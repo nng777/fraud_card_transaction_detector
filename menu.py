@@ -17,7 +17,7 @@ class Menu:
                 "2. Test models\n"
                 "3. Visualize comparison\n"
                 "4. Save anomalies\n"
-                "5. Scatter plot (amount vs time)\n"
+                "5. Amount box plot\n"
                 "6. Heatmap correlation\n"
                 "7. Exit"
             )
@@ -50,8 +50,8 @@ class Menu:
                 if self.results is None:
                     print("Run test first")
                     continue
-                img = self.detector.visualize_scatter()
-                print(f"Scatter plot saved to {img}")
+                img = self.detector.visualize_boxplot()
+                print(f"Box plot saved to {img}")
             elif choice == "6":
                 if self.results is None:
                     print("Run test first")
