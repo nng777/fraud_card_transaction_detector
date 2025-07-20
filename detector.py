@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 
 class FraudDetector:
-    """Train and evaluate unsupervised models for fraud detection."""
+    #Train and evaluate unsupervised models for fraud detection.
 
     def __init__(self, train_file: str | Path, test_file: str | Path):
         self.train_file = Path(train_file)
@@ -31,7 +31,7 @@ class FraudDetector:
 
     @staticmethod
     def _load_ip_list(path: Path) -> set[int]:
-        """Load a set of bad reputation IP addresses from a CSV file."""
+        #Load a set of bad reputation IP addresses from a CSV file.
         if not path.exists():
             return set()
         df = pd.read_csv(path)
@@ -45,7 +45,7 @@ class FraudDetector:
 
     @staticmethod
     def _load_country_list(path: Path) -> set[str]:
-        """Load a set of blacklisted countries from a CSV file."""
+        #Load a set of blacklisted countries from a CSV file.
         if not path.exists():
             return set()
         df = pd.read_csv(path)
@@ -53,7 +53,7 @@ class FraudDetector:
 
     @staticmethod
     def _haversine(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
-        """Return the great-circle distance between two coordinates in kilometers."""
+        #Return the great-circle distance between two coordinates in kilometers.
         lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
         dlon = lon2 - lon1
         dlat = lat2 - lat1
@@ -63,17 +63,13 @@ class FraudDetector:
 
 
     def is_bad_ip(self, ip: int | str) -> bool:
-        """Return True if IP address is in the bad reputation list."""
+        #Return True if IP address is in the bad reputation list.
         ip_int = int(ipaddress.ip_address(ip))
         return ip_int in self.bad_ip_list
 
     def is_blacklisted_country(self, country: str | int | float) -> bool:
-        """Return True if the country is blacklisted.
+        #Return True if the country is blacklisted.
 
-        The dataset may contain encoded values or missing data. Cast the input to
-        string and ignore NaN values to avoid ``AttributeError`` during
-        ``str.upper``.
-        """
         if pd.isna(country):
             return False
         return str(country).upper() in self.blacklisted_countries
@@ -198,7 +194,6 @@ class FraudDetector:
 
     def save_anomalies(self) -> list[Path]:
         """Save detected anomalies from the most recent test to CSV files.
-
         One file is created for each model and each heuristic check. Filenames
         follow the pattern ``<model>_anomalies.csv``.
         """
@@ -234,7 +229,7 @@ class FraudDetector:
         return saved
 
     def visualize(self, results: Dict[str, int] | None = None) -> Path:
-        """Create a bar chart comparing anomaly counts across models."""
+        #Create a bar chart comparing anomaly counts across models.
         if results is None:
             if not hasattr(self, "_last_results"):
                 raise RuntimeError("No results to visualize. Run test first.")
@@ -252,7 +247,7 @@ class FraudDetector:
         return out
 
     def visualize_boxplot(self, model: str = "isolation_forest") -> Path:
-        """Show a box plot of transaction amounts grouped by anomaly flag."""
+        #Show a box plot of transaction amounts grouped by anomaly flag.
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
 
@@ -273,7 +268,7 @@ class FraudDetector:
         return out
 
     def visualize_heatmap(self) -> Path:
-        """Show a heatmap of feature correlations."""
+        #Show a heatmap of feature correlations.
         if not hasattr(self, "_test_df"):
             raise RuntimeError("Run test first.")
 
@@ -293,7 +288,7 @@ class FraudDetector:
         x_col: str = "location_longitude",
         y_col: str = "location_latitude",
     ) -> Path:
-        """Scatter plot of two features colored by anomaly flag."""
+        #Scatter plot of two features colored by anomaly flag.
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
 
