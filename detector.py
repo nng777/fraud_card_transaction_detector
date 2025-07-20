@@ -1,4 +1,5 @@
 """
+TASK
 1.Create python script credit_card_fraud_detection based on multiple unsupervised models for usual transactional fraud detection.
 2.Create another python file for "Menu" to:
 2.1.Train models based on input train_dataset.csv file in the project directory, display training progress bar
