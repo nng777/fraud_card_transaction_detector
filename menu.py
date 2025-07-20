@@ -11,7 +11,14 @@ class Menu:
 
     def run(self) -> None:
         while True:
-            print("\nMenu:\n1. Train models\n2. Test models\n3. Visualize comparison\n4. Exit")
+            print(
+                "\nMenu:\n"
+                "1. Train models\n"
+                "2. Test models\n"
+                "3. Visualize comparison\n"
+                "4. Save anomalies\n"
+                "5. Exit"
+            )
             choice = input("Select option: ").strip()
             if choice == "1":
                 self.detector.train()
@@ -31,6 +38,12 @@ class Menu:
                 img = self.detector.visualize(self.results)
                 print(f"Chart saved to {img}")
             elif choice == "4":
+                if self.results is None:
+                    print("Run test first")
+                    continue
+                out = self.detector.save_anomalies()
+                print(f"Potential fraud saved to {out}")
+            elif choice == "5":
                 break
             else:
                 print("Invalid option")
