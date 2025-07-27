@@ -251,8 +251,8 @@ class FraudDetector:
         plt.close()
         return out
 
-    def visualize_boxplot(self, model: str = "isolation_forest") -> Path:
-        """Show a box plot of transaction amounts grouped by anomaly flag."""
+    def visualize_card_scheme(self, model: str = "isolation_forest") -> Path:
+        """Bar chart of anomalous transactions grouped by card scheme."""
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
 
@@ -261,19 +261,25 @@ class FraudDetector:
 
         df = self._test_df.copy()
         df["anomaly"] = (self._last_predictions[model] == -1)
+
+        counts = (
+            df[df["anomaly"]]["card_scheme"].value_counts().sort_values(ascending=False)
+        )
+
         plt.figure(figsize=(6, 4))
-        sns.boxplot(x="anomaly", y="amount", data=df)
-        plt.xlabel("Anomaly")
-        plt.ylabel("Amount")
-        plt.title(f"Amount distribution - {model}")
+        sns.barplot(x=counts.index, y=counts.values)
+        plt.xlabel("Card Scheme")
+        plt.ylabel("Anomaly count")
+        plt.title(f"Fraud by card scheme - {model}")
+        plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
-        out = Path(f"{model}_boxplot.png")
+        out = Path(f"{model}_card_scheme.png")
         plt.savefig(out)
         plt.close()
         return out
 
-    def visualize_pairplot(self, model: str = "isolation_forest") -> Path:
-        """Show pairwise relationships of features colored by anomaly flag."""
+    def visualize_countries(self, model: str = "isolation_forest") -> Path:
+        """Bar chart of anomalous transactions grouped by country."""
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
 
@@ -283,43 +289,48 @@ class FraudDetector:
         df = self._test_df.copy()
         df["anomaly"] = (self._last_predictions[model] == -1)
 
-        # use only numeric columns to avoid errors in seaborn.pairplot
-        num_cols = df.select_dtypes(include="number").columns.tolist()
-        if "anomaly" not in num_cols:
-            num_cols.append("anomaly")
-        pair_df = df[num_cols]
+        counts = (
+            df[df["anomaly"]]["transaction_country"].value_counts().sort_values(ascending=False)
+        )
 
-        sns_pair = sns.pairplot(pair_df, hue="anomaly", diag_kind="kde", corner=True)
-        out = Path(f"{model}_pairplot.png")
-        sns_pair.fig.suptitle(f"Pairplot of features - {model}", y=1.02)
-        sns_pair.savefig(out)
-        plt.close(sns_pair.fig)
+        plt.figure(figsize=(6, 4))
+        sns.barplot(x=counts.index, y=counts.values)
+        plt.xlabel("Country")
+        plt.ylabel("Anomaly count")
+        plt.title(f"Fraud by country - {model}")
+        plt.xticks(rotation=45, ha="right")
+        out = Path(f"{model}_countries.png")
+        plt.tight_layout()
+        plt.savefig(out)
+        plt.close()
         return out
 
-    def visualize_scatter(
+    def visualize_device_info(
         self,
         model: str = "isolation_forest",
-        x_col: str = "location_longitude",
-        y_col: str = "location_latitude",
     ) -> Path:
-        """Scatter plot of two features colored by anomaly flag."""
+        """Bar chart of anomalous transactions grouped by device info."""
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
 
         if model not in self._last_predictions:
             raise ValueError(f"Unknown model: {model}")
 
-        if x_col not in self._test_df.columns or y_col not in self._test_df.columns:
-            raise ValueError("Selected columns not found in dataset")
-
         df = self._test_df.copy()
         df["anomaly"] = (self._last_predictions[model] == -1)
 
-        plt.figure(figsize=(6, 6))
-        sns.scatterplot(x=x_col, y=y_col, hue="anomaly", data=df, palette="Set1")
-        plt.title(f"{model} anomalies")
+        counts = (
+            df[df["anomaly"]]["device_info"].value_counts().sort_values(ascending=False)
+        )
+
+        plt.figure(figsize=(6, 4))
+        sns.barplot(x=counts.index, y=counts.values)
+        plt.xlabel("Device")
+        plt.ylabel("Anomaly count")
+        plt.title(f"Fraud by device - {model}")
+        plt.xticks(rotation=45, ha="right")
+        out = Path(f"{model}_device_info.png")
         plt.tight_layout()
-        out = Path(f"{model}_scatter.png")
         plt.savefig(out)
         plt.close()
         return out
