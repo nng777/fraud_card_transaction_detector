@@ -251,89 +251,77 @@ class FraudDetector:
         plt.close()
         return out
 
-    def visualize_card_scheme(self, model: str = "isolation_forest") -> Path:
-        """Bar chart of anomalous transactions grouped by card scheme."""
-        if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
-            raise RuntimeError("Run test first.")
-
-        if model not in self._last_predictions:
-            raise ValueError(f"Unknown model: {model}")
-
-        df = self._test_df.copy()
-        df["anomaly"] = (self._last_predictions[model] == -1)
-
-        counts = (
-            df[df["anomaly"]]["card_scheme"].value_counts().sort_values(ascending=False)
-        )
-
-        plt.figure(figsize=(6, 4))
-        sns.barplot(x=counts.index, y=counts.values)
-        plt.xlabel("Card Scheme")
-        plt.ylabel("Anomaly count")
-        plt.title(f"Fraud by card scheme - {model}")
-        plt.xticks(rotation=45, ha="right")
-        plt.tight_layout()
-        out = Path(f"{model}_card_scheme.png")
-        plt.savefig(out)
-        plt.close()
-        return out
-
-    def visualize_countries(self, model: str = "isolation_forest") -> Path:
-        """Bar chart of anomalous transactions grouped by country."""
-        if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
-            raise RuntimeError("Run test first.")
-
-        if model not in self._last_predictions:
-            raise ValueError(f"Unknown model: {model}")
-
-        df = self._test_df.copy()
-        df["anomaly"] = (self._last_predictions[model] == -1)
-
-        counts = (
-            df[df["anomaly"]]["transaction_country"].value_counts().sort_values(ascending=False)
-        )
-
-        plt.figure(figsize=(6, 4))
-        sns.barplot(x=counts.index, y=counts.values)
-        plt.xlabel("Country")
-        plt.ylabel("Anomaly count")
-        plt.title(f"Fraud by country - {model}")
-        plt.xticks(rotation=45, ha="right")
-        out = Path(f"{model}_countries.png")
-        plt.tight_layout()
-        plt.savefig(out)
-        plt.close()
-        return out
-
-    def visualize_device_info(
+    def _plot_heatmap(
         self,
-        model: str = "isolation_forest",
-    ) -> Path:
-        """Bar chart of anomalous transactions grouped by device info."""
+        column: str,
+        title: str,
+        *,
+        ax: plt.Axes | None = None,
+        top_n: int | None = None,
+        mapping: dict | None = None,
+    ) -> None:
+        """Plot a heatmap of anomaly counts for ``column`` by model."""
+
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
 
-        if model not in self._last_predictions:
-            raise ValueError(f"Unknown model: {model}")
-
         df = self._test_df.copy()
-        df["anomaly"] = (self._last_predictions[model] == -1)
+        if mapping:
+            df[column] = df[column].map(mapping)
 
-        counts = (
-            df[df["anomaly"]]["device_info"].value_counts().sort_values(ascending=False)
+        if top_n is not None:
+            top_categories = df[column].value_counts().nlargest(top_n).index
+            df = df[df[column].isin(top_categories)]
+
+        categories = sorted(df[column].dropna().unique())
+        models = list(self._last_predictions.keys())
+        heat = pd.DataFrame(0, index=categories, columns=models)
+
+        for model, preds in self._last_predictions.items():
+            subset = df[preds == -1]
+            counts = subset[column].value_counts()
+            for cat, val in counts.items():
+                heat.loc[cat, model] = val
+
+        if ax is None:
+            ax = plt.gca()
+        sns.heatmap(heat, annot=True, fmt="d", cmap="Blues", ax=ax)
+        ax.set_xlabel("Model")
+        ax.set_ylabel(column.replace("_", " ").title())
+        ax.set_title(title)
+
+    def visualize_histograms(self) -> Path:
+        """Create a grid of histograms for various categorical features."""
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        self._plot_heatmap(
+            column="card_scheme",
+            title="Card Scheme",
+            ax=axes[0, 0],
         )
-
-        plt.figure(figsize=(6, 4))
-        sns.barplot(x=counts.index, y=counts.values)
-        plt.xlabel("Device")
-        plt.ylabel("Anomaly count")
-        plt.title(f"Fraud by device - {model}")
-        plt.xticks(rotation=45, ha="right")
-        out = Path(f"{model}_device_info.png")
-        plt.tight_layout()
-        plt.savefig(out)
-        plt.close()
+        self._plot_heatmap(
+            column="card_level",
+            title="Card Level",
+            ax=axes[0, 1],
+        )
+        self._plot_heatmap(
+            column="device_info",
+            title="Device Info",
+            ax=axes[1, 0],
+        )
+        self._plot_heatmap(
+            column="3D_SecureTransaction(yes/no)",
+            title="3D Secure",
+            ax=axes[1, 1],
+            mapping={1: "Yes", 0: "No"},
+        )
+        fig.tight_layout()
+        out = Path("anomaly_histograms.png")
+        fig.savefig(out)
+        plt.close(fig)
         return out
+
+
 
 
 if __name__ == "__main__":

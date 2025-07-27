@@ -16,11 +16,9 @@ class Menu:
                 "1. Train models\n"
                 "2. Test models\n"
                 "3. Visualize comparison\n"
-                "4. Card scheme chart\n"
-                "5. Country chart\n"
-                "6. Device info chart\n"
-                "7. Save anomalies\n"
-                "8. Exit"
+                "4. View histograms\n"
+                "5. Save anomalies\n"
+                "6. Exit"
             )
             choice = input("Select option: ").strip()
             if choice == "1":
@@ -44,28 +42,16 @@ class Menu:
                 if self.results is None:
                     print("Run test first")
                     continue
-                img = self.detector.visualize_card_scheme()
+                img = self.detector.visualize_histograms()
                 print(f"Chart saved to {img}")
             elif choice == "5":
-                if self.results is None:
-                    print("Run test first")
-                    continue
-                img = self.detector.visualize_countries()
-                print(f"Chart saved to {img}")
-            elif choice == "6":
-                if self.results is None:
-                    print("Run test first")
-                    continue
-                img = self.detector.visualize_device_info()
-                print(f"Chart saved to {img}")
-            elif choice == "7":
                 if self.results is None:
                     print("Run test first")
                     continue
                 files = self.detector.save_anomalies()
                 for f in files:
                     print(f"Saved anomalies to {f}")
-            elif choice == "8":
+            elif choice == "6":
                 break
             else:
                 print("Invalid option")
