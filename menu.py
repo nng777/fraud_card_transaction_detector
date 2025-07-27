@@ -18,7 +18,7 @@ class Menu:
                 "3. Comparison Chart Diagram\n"
                 "4. Save anomalies\n"
                 "5. Amount Box Plot Diagram\n"
-                "6. Heatmap Correlation Diagram\n"
+                "6. Pair plot Correlation Diagram\n"
                 "7. Location Scatter Diagram\n"
                 "8. Exit"
             )
@@ -57,8 +57,8 @@ class Menu:
                 if self.results is None:
                     print("Run test first")
                     continue
-                img = self.detector.visualize_heatmap()
-                print(f"Heatmap saved to {img}")
+                img = self.detector.visualize_pairplot()
+                print(f"Pair plot saved to {img}")
             elif choice == "7":
                 if self.results is None:
                     print("Run test first")
