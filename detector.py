@@ -11,7 +11,6 @@ import seaborn as sns
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor
-from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 from tqdm import tqdm
 
@@ -22,7 +21,6 @@ class FraudDetector:
     def __init__(self, train_file: str | Path, test_file: str | Path):
         self.train_file = Path(train_file)
         self.test_file = Path(test_file)
-        self.scaler = StandardScaler()
         self.models: Dict[str, object] = {}
         self.bad_ip_list = self._load_ip_list(Path("bad_reputation_ips.csv"))
         self.blacklisted_countries = self._load_country_list(
@@ -116,7 +114,7 @@ class FraudDetector:
 
         return df
 
-    def _prepare_features(self, df: pd.DataFrame, fit: bool = False) -> pd.DataFrame:
+    def _prepare_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df_enc = df.copy()
         # ``transaction_id`` is used only for identifying transactions and
         # should not influence the models, so exclude it from the feature set.
@@ -125,31 +123,27 @@ class FraudDetector:
         for col in df_enc.select_dtypes(include="object").columns:
             df_enc[col] = pd.factorize(df_enc[col])[0]
         X = df_enc.values
-        if fit:
-            X = self.scaler.fit_transform(X)
-            joblib.dump(self.scaler, "scaler.joblib")
-        else:
-            if not Path("scaler.joblib").exists():
-                raise RuntimeError("Scaler not found. Train models first.")
-            self.scaler = joblib.load("scaler.joblib")
-            X = self.scaler.transform(X)
         return X
 
 
     def _get_algorithms(self) -> Dict[str, object]:
-        return {
+        """Return the anomaly detection models used by the detector."""
+
+        algorithms = {
             "isolation_forest": IsolationForest(random_state=42),
-            # ``contamination`` must be set when using ``novelty=True`` otherwise
-            # the model may consider every sample normal after training.
+            # ``contamination`` must be set when using ``novelty=True`` to avoid
+            # the model marking all samples as normal after training.
             "local_outlier_factor": LocalOutlierFactor(
                 novelty=True,
                 contamination=0.05,
             ),
             "one_class_svm": OneClassSVM(gamma="auto"),
         }
-   def train(self) -> None:
+        return algorithms
+
+    def train(self) -> None:
         df = self._load_dataset(self.train_file)
-        X = self._prepare_features(df, fit=True)
+        X = self._prepare_features(df)
         for name, model in tqdm(self._get_algorithms().items(), desc="Training models"):
             model.fit(X)
             joblib.dump(model, f"{name}.joblib")
@@ -158,7 +152,7 @@ class FraudDetector:
 
     def test(self) -> Dict[str, int]:
         df = self._load_dataset(self.test_file)
-        X = self._prepare_features(df, fit=False)
+        X = self._prepare_features(df)
         results: Dict[str, int] = {}
         predictions: Dict[str, Iterable[int]] = {}
         algorithms = self._get_algorithms()
