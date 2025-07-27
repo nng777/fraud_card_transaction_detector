@@ -147,8 +147,7 @@ class FraudDetector:
             ),
             "one_class_svm": OneClassSVM(gamma="auto"),
         }
-
-    def train(self) -> None:
+   def train(self) -> None:
         df = self._load_dataset(self.train_file)
         X = self._prepare_features(df, fit=True)
         for name, model in tqdm(self._get_algorithms().items(), desc="Training models"):
