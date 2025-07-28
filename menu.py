@@ -15,7 +15,7 @@ class Menu:
                 "\nMenu:\n"
                 "1. Train models\n"
                 "2. Test models\n"
-                "3. Visualize comparison\n"
+                "3. Visualize summary\n"
                 "4. View histograms\n"
                 "5. Save anomalies\n"
                 "6. Exit"
@@ -36,7 +36,7 @@ class Menu:
                 if self.results is None:
                     print("Run test first")
                     continue
-                img = self.detector.visualize(self.results)
+                img = self.detector.visualize_summary()
                 print(f"Chart saved to {img}")
             elif choice == "4":
                 if self.results is None:

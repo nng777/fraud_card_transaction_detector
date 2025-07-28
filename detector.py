@@ -4,11 +4,13 @@ import ipaddress
 from pathlib import Path
 from typing import Dict, Iterable
 from math import radians, sin, cos, sqrt, atan2
+import time
 
 import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor
 from sklearn.svm import OneClassSVM
@@ -26,6 +28,11 @@ class FraudDetector:
         self.blacklisted_countries = self._load_country_list(
             Path("blacklisted_countries.csv")
         )
+        self.train_times: Dict[str, float] = {}
+        self.test_times: Dict[str, float] = {}
+        self.precision: Dict[str, float] = {}
+        self.recall: Dict[str, float] = {}
+        self.f1: Dict[str, float] = {}
 
     @staticmethod
     def _load_ip_list(path: Path) -> set[int]:
@@ -145,7 +152,9 @@ class FraudDetector:
         df = self._load_dataset(self.train_file)
         X = self._prepare_features(df)
         for name, model in tqdm(self._get_algorithms().items(), desc="Training models"):
+            start = time.perf_counter()
             model.fit(X)
+            self.train_times[name] = time.perf_counter() - start
             joblib.dump(model, f"{name}.joblib")
             self.models[name] = model
 
@@ -171,7 +180,9 @@ class FraudDetector:
             self.models[name] = model
         for name in tqdm(algorithms.keys(), desc="Testing models"):
             model = self.models[name]
+            start = time.perf_counter()
             preds = model.predict(X)
+            self.test_times[name] = time.perf_counter() - start
             predictions[name] = preds
             results[name] = int((preds == -1).sum())
 
@@ -184,6 +195,18 @@ class FraudDetector:
         ).astype(int)
         results["bad_ip"] = int(df["bad_ip"].sum())
         results["blacklisted_country"] = int(df["blacklisted_country"].sum())
+        ground_truth = (df["bad_ip"] | df["blacklisted_country"]).astype(int)
+        for name, preds in predictions.items():
+            pred_series = (preds == -1).astype(int)
+            tp = int(((pred_series == 1) & (ground_truth == 1)).sum())
+            fp = int(((pred_series == 1) & (ground_truth == 0)).sum())
+            fn = int(((pred_series == 0) & (ground_truth == 1)).sum())
+            precision = tp / (tp + fp) if (tp + fp) else 0.0
+            recall = tp / (tp + fn) if (tp + fn) else 0.0
+            f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+            self.precision[name] = precision * 100
+            self.recall[name] = recall * 100
+            self.f1[name] = f1 * 100
         self._last_results = results
         self._last_predictions = predictions
         self._test_df = df
@@ -227,21 +250,205 @@ class FraudDetector:
         return saved
 
     def visualize(self, results: Dict[str, int] | None = None) -> Path:
-        """Create a bar chart comparing anomaly counts across models."""
+        """Bar chart comparing normal and anomalous predictions per model."""
+        if results is None:
+            if not hasattr(self, "_last_results") or not hasattr(self, "_test_df"):
+                raise RuntimeError("No results to visualize. Run test first.")
+            results = self._last_results
+        names = [n for n in results.keys() if n not in {"bad_ip", "blacklisted_country"}]
+        if not hasattr(self, "_test_df"):
+            raise RuntimeError("Run test first")
+        total = len(self._test_df)
+
+        normal_counts = []
+        anomaly_counts = []
+        for n in names:
+            anomalies = results[n]
+            normal = total - anomalies
+            normal_counts.append(normal)
+            anomaly_counts.append(anomalies)
+
+        x = np.arange(len(names))
+        width = 0.35
+        fig, ax = plt.subplots(figsize=(8, 4))
+        bars_norm = ax.bar(x - width / 2, normal_counts, width, label="Normal")
+        bars_anom = ax.bar(x + width / 2, anomaly_counts, width, label="Anomaly")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(names)
+        ax.set_ylabel("Count")
+        ax.set_title("Model comparison")
+        ax.legend()
+
+        ax.bar_label(bars_norm, padding=3)
+        ax.bar_label(bars_anom, padding=3)
+
+        fig.tight_layout()
+        out = Path("model_comparison.png")
+        fig.savefig(out)
+        plt.close(fig)
+        return out
+
+    def visualize_heuristics(self, results: Dict[str, int] | None = None) -> Path:
+        """Bar chart of heuristic anomaly counts."""
         if results is None:
             if not hasattr(self, "_last_results"):
                 raise RuntimeError("No results to visualize. Run test first.")
             results = self._last_results
-        names = list(results.keys())
+        names = [n for n in ["bad_ip", "blacklisted_country"] if n in results]
         counts = [results[n] for n in names]
-        plt.figure(figsize=(8, 4))
-        plt.bar(names, counts)
-        plt.ylabel("Anomalies detected")
-        plt.title("Model comparison")
-        plt.tight_layout()
-        out = Path("model_comparison.png")
-        plt.savefig(out)
-        plt.close()
+        fig, ax = plt.subplots(figsize=(6, 4))
+        bars = ax.bar(names, counts)
+        ax.set_ylabel("Anomalies detected")
+        ax.set_title("Heuristic comparison")
+        ax.bar_label(bars, padding=3)
+        fig.tight_layout()
+        out = Path("heuristic_comparison.png")
+        fig.savefig(out)
+        plt.close(fig)
+        return out
+
+    def visualize_metrics(self) -> Path:
+        """Grouped bar chart of precision, recall and F1 score per model."""
+        if not self.precision:
+            raise RuntimeError("Run test first.")
+        names = list(self.precision.keys())
+        prec = np.array([self.precision[n] for n in names])
+        rec = np.array([self.recall[n] for n in names])
+        f1 = np.array([self.f1[n] for n in names])
+        x = np.arange(len(names))
+        width = 0.25
+        fig, ax = plt.subplots(figsize=(8, 4))
+        bars_p = ax.bar(x - width, prec, width, label="Precision")
+        bars_r = ax.bar(x, rec, width, label="Recall")
+        bars_f = ax.bar(x + width, f1, width, label="F1")
+        ax.set_xticks(x)
+        ax.set_xticklabels(names)
+        ax.set_ylabel("Score (%)")
+        ax.set_title("Model precision/recall/F1")
+        ax.legend()
+
+        ax.bar_label(bars_p, fmt="%.1f", padding=3)
+        ax.bar_label(bars_r, fmt="%.1f", padding=3)
+        ax.bar_label(bars_f, fmt="%.1f", padding=3)
+
+        fig.tight_layout()
+        out = Path("model_metrics.png")
+        fig.savefig(out)
+        plt.close(fig)
+        return out
+
+    def visualize_timings(self) -> Path:
+        """Grouped bar chart of training and testing time per model."""
+        if not self.train_times or not self.test_times:
+            raise RuntimeError("Run train and test first.")
+        names = list(self._get_algorithms().keys())
+        train = [self.train_times.get(n, 0) for n in names]
+        test = [self.test_times.get(n, 0) for n in names]
+        x = np.arange(len(names))
+        width = 0.35
+        fig, ax = plt.subplots(figsize=(8, 4))
+        bars_train = ax.bar(x - width / 2, train, width, label="Train")
+        bars_test = ax.bar(x + width / 2, test, width, label="Test")
+        ax.set_xticks(x)
+        ax.set_xticklabels(names)
+        ax.set_ylabel("Seconds")
+        ax.set_title("Model processing time")
+        ax.legend()
+
+        ax.bar_label(bars_train, fmt="%.2f", padding=3)
+        ax.bar_label(bars_test, fmt="%.2f", padding=3)
+
+        fig.tight_layout()
+        out = Path("model_timings.png")
+        fig.savefig(out)
+        plt.close(fig)
+        return out
+
+    def visualize_summary(self) -> Path:
+        """Create a single figure with multiple comparison charts."""
+
+        if not hasattr(self, "_last_results") or not hasattr(self, "_test_df"):
+            raise RuntimeError("Run test first.")
+        if not self.train_times or not self.test_times:
+            raise RuntimeError("Run train first.")
+
+        results = self._last_results
+        names = [n for n in results.keys() if n not in {"bad_ip", "blacklisted_country"}]
+        total = len(self._test_df)
+
+        normal_counts = []
+        anomaly_counts = []
+        for n in names:
+            anomalies = results[n]
+            normal_counts.append(total - anomalies)
+            anomaly_counts.append(anomalies)
+
+        heuristics = [n for n in ["bad_ip", "blacklisted_country"] if n in results]
+        heuristic_counts = [results[n] for n in heuristics]
+
+        metrics_names = list(self.precision.keys())
+        prec = np.array([self.precision[n] for n in metrics_names])
+        rec = np.array([self.recall[n] for n in metrics_names])
+        f1 = np.array([self.f1[n] for n in metrics_names])
+
+        time_names = list(self._get_algorithms().keys())
+        train = [self.train_times.get(n, 0) for n in time_names]
+        test = [self.test_times.get(n, 0) for n in time_names]
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+
+        # Model comparison
+        x = np.arange(len(names))
+        width = 0.35
+        bars_norm = axes[0, 0].bar(x - width / 2, normal_counts, width, label="Normal")
+        bars_anom = axes[0, 0].bar(x + width / 2, anomaly_counts, width, label="Anomaly")
+        axes[0, 0].set_xticks(x)
+        axes[0, 0].set_xticklabels(names)
+        axes[0, 0].set_ylabel("Count")
+        axes[0, 0].set_title("Model comparison")
+        axes[0, 0].legend()
+        axes[0, 0].bar_label(bars_norm, padding=3)
+        axes[0, 0].bar_label(bars_anom, padding=3)
+
+        # Heuristic comparison
+        bars_h = axes[0, 1].bar(heuristics, heuristic_counts)
+        axes[0, 1].set_ylabel("Anomalies detected")
+        axes[0, 1].set_title("Heuristic comparison")
+        axes[0, 1].bar_label(bars_h, padding=3)
+
+        # Metrics
+        x_m = np.arange(len(metrics_names))
+        width_m = 0.25
+        bars_p = axes[1, 0].bar(x_m - width_m, prec, width_m, label="Precision")
+        bars_r = axes[1, 0].bar(x_m, rec, width_m, label="Recall")
+        bars_f = axes[1, 0].bar(x_m + width_m, f1, width_m, label="F1")
+        axes[1, 0].set_xticks(x_m)
+        axes[1, 0].set_xticklabels(metrics_names)
+        axes[1, 0].set_ylabel("Score (%)")
+        axes[1, 0].set_title("Model precision/recall/F1")
+        axes[1, 0].legend()
+        axes[1, 0].bar_label(bars_p, fmt="%.1f", padding=3)
+        axes[1, 0].bar_label(bars_r, fmt="%.1f", padding=3)
+        axes[1, 0].bar_label(bars_f, fmt="%.1f", padding=3)
+
+        # Timings
+        x_t = np.arange(len(time_names))
+        width_t = 0.35
+        bars_train = axes[1, 1].bar(x_t - width_t / 2, train, width_t, label="Train")
+        bars_test = axes[1, 1].bar(x_t + width_t / 2, test, width_t, label="Test")
+        axes[1, 1].set_xticks(x_t)
+        axes[1, 1].set_xticklabels(time_names)
+        axes[1, 1].set_ylabel("Seconds")
+        axes[1, 1].set_title("Model processing time")
+        axes[1, 1].legend()
+        axes[1, 1].bar_label(bars_train, fmt="%.2f", padding=3)
+        axes[1, 1].bar_label(bars_test, fmt="%.2f", padding=3)
+
+        fig.tight_layout()
+        out = Path("summary_view.png")
+        fig.savefig(out)
+        plt.close(fig)
         return out
 
     def _plot_heatmap(
