@@ -73,12 +73,7 @@ class FraudDetector:
         return ip_int in self.bad_ip_list
 
     def is_blacklisted_country(self, country: str | int | float) -> bool:
-        """Return True if the country is blacklisted.
-
-        The dataset may contain encoded values or missing data. Cast the input to
-        string and ignore NaN values to avoid ``AttributeError`` during
-        ``str.upper``.
-        """
+        """Return True if the country is blacklisted."""
         if pd.isna(country):
             return False
         return str(country).upper() in self.blacklisted_countries
@@ -137,7 +132,7 @@ class FraudDetector:
         """Return the anomaly detection models used by the detector."""
 
         algorithms = {
-            "isolation_forest": IsolationForest(random_state=42),
+            "isolation_forest": IsolationForest(random_state=50),
             # ``contamination`` must be set when using ``novelty=True`` to avoid
             # the model marking all samples as normal after training.
             "local_outlier_factor": LocalOutlierFactor(
@@ -213,11 +208,7 @@ class FraudDetector:
         return results
 
     def save_anomalies(self) -> list[Path]:
-        """Save detected anomalies from the most recent test to CSV files.
-
-        One file is created for each model and each heuristic check. Filenames
-        follow the pattern ``<model>_anomalies.csv``.
-        """
+        """Save detected anomalies from the most recent test to CSV files."""
 
         if not hasattr(self, "_test_df") or not hasattr(self, "_last_predictions"):
             raise RuntimeError("Run test first.")
